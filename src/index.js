@@ -1,80 +1,53 @@
-// ═══════════════════════════════════════════════════════════════
-// src/index.js — Boot. SAB. Workers. 3 env vars only.
-// All chain/wallet config lives in config.js
-// ═══════════════════════════════════════════════════════════════
-import { Worker, isMainThread }          from 'worker_threads'
-import { fileURLToPath }                  from 'url'
-import { createServer }                   from 'http'
-import path                               from 'path'
-import { CHAINS, TOTAL_FLASH, TOTAL_CYCLES, MEMORY_MB, EXECUTOR, TREASURY } from './config.js'
-import { initDB }                         from './db.js'
-import { initOverlay }                    from './overlay.js'
+// src/index.js — ALUCARD v2.0
+// Fix: sovereign worker captured and passed correctly to startDashboard
+import { Worker, isMainThread } from 'worker_threads'
+import { createServer }         from 'http'
+import { fileURLToPath }        from 'url'
+import path                     from 'path'
+import { CHAINS, TOTAL_FLASH, TOTAL_CYCLES, MEMORY_MB,
+         EXECUTOR, TREASURY }               from './config.js'
+import { initDB }                           from './db.js'
+import { initOverlay }                      from './overlay.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// ── 3 ENV VARS — warn only, never crash ───────────────────────────────────────
-if (!process.env.MODEMPAY_SECRET_KEY) console.warn('[BOOT] MODEMPAY_SECRET_KEY not set — settlement in test mode')
-if (!process.env.DASHBOARD_PASSKEY)   console.warn('[BOOT] DASHBOARD_PASSKEY not set — using default 3530588')
-
-const ENV = {
-  PORT:     parseInt(process.env.PORT||'3000'),
-  PIN:      process.env.DASHBOARD_PASSKEY||'3530588',
-  MPKEY:    process.env.MODEMPAY_SECRET_KEY||'',
-}
-
-// ── MASTER SAB (4096 bytes) ────────────────────────────────────────────────────
-// Float64 layout (offset × 8 bytes):
-//  [0]  propeller      [1]  daily_rev       [2]  flash_base    [3]  flash_reserve
-//  [4]  crash_signal   [5]  treasury_bal    [6]  queue_size    [7]  exec_count
-//  [8]  uptime_sec     [9]  v7_active       [10] amplifier_rev [11] total_rev_all
-//  [20-39] gas_gwei/chain   [40-59] chain_active  [60-79] competition/chain
-// Int32 signal slots at SAB bytes 4080–4095 (outside Float64 area):
-//  4080: chains→nexus write head
-//  4084: nexus→apex write head
-//  4088: control (halt/crash flags)
-// Ring buffers:
-//  bytes 1024–2047: chains→nexus (64 slots × 16 bytes: [usd:f64][chainId:f64])
-//  bytes 2048–3071: nexus→apex   (64 slots × 16 bytes: [flash:f64][profit:f64])
-
+// ── SAB — 640 bytes of Float64 = 80 slots + signal area ─────────────────────
 export const SAB      = new SharedArrayBuffer(4096)
 export const HOT      = new Float64Array(SAB)
-export const SIG_C2N  = new Int32Array(SAB, 4080)   // chains→nexus
-export const SIG_N2A  = new Int32Array(SAB, 4084)   // nexus→apex
-export const SIG_CTRL = new Int32Array(SAB, 4088)   // control
+export const SIG_C2N  = new Int32Array(SAB, 4080)
+export const SIG_N2A  = new Int32Array(SAB, 4084)
+export const SIG_CTRL = new Int32Array(SAB, 4088)
 
 // Defaults
-HOT[0] = 5                // P5 propeller
-HOT[2] = TOTAL_FLASH      // $45.59B base flash
+HOT[0]  = 5                    // P5 default propeller
+HOT[2]  = TOTAL_FLASH          // $45.59B base flash
+HOT[12] = 25                   // 25% Model 2 → reserve
+HOT[13] = 0                    // reserve starts at 0
+HOT[14] = TOTAL_FLASH          // effective flash = base until reserve fills
+HOT[18] = 18.16e15             // P100 default = $18.16Q (P30 full reserve)
 
-// ── MEMORY GUARDIAN — hard ceiling, never exceeded ────────────────────────────
-// Runs every 5 seconds. Enforces MEMORY_MB ceiling unconditionally.
+// ── MEMORY GUARD ─────────────────────────────────────────────────────────────
 const memGuard = () => {
   const mb = process.memoryUsage().heapUsed / 1024 / 1024
-  HOT[6] = mb  // store current MB in SAB slot 6 (reused for mem monitoring)
-  if (mb > MEMORY_MB * 0.85) {
-    // 85% threshold: aggressive GC
-    if (global.gc) global.gc()
-  }
+  if (mb > MEMORY_MB * 0.85 && global.gc) global.gc()
   if (mb > MEMORY_MB * 0.95) {
-    // 95% threshold: emit signal to workers to flush/clear buffers
-    Atomics.store(SIG_CTRL, 0, 1)   // signal: memory pressure
+    Atomics.store(SIG_CTRL, 0, 1)
     if (global.gc) global.gc()
-    console.warn(`[MEM] ${mb.toFixed(0)}MB — pressure signal sent`)
+    console.warn(`[MEM] ${mb.toFixed(0)}MB — pressure signal sent to workers`)
   }
 }
-setInterval(memGuard, 5000)
 
-// ── WORKER SPAWNER ─────────────────────────────────────────────────────────────
-function spawn(file, extra={}) {
+// ── WORKER SPAWNER ────────────────────────────────────────────────────────────
+function spawn(file, extra = {}) {
   const url = new URL(file, import.meta.url)
   const w   = new Worker(url, { workerData:{ SAB, ...extra } })
-  const tag = path.basename(file,'.js').toUpperCase()
-  w.on('error',   e => console.error(`[${tag}]`, e.message?.slice(0,80)))
-  w.on('exit',    c => { if(c!==0) setTimeout(()=>spawn(file,extra), 2000) })
+  const tag = path.basename(file, '.js').toUpperCase()
+  w.on('error', e  => console.error(`[${tag}]`, e.message?.slice(0, 100)))
+  w.on('exit',  c  => { if (c !== 0) setTimeout(() => spawn(file, extra), 2000) })
   return w
 }
 
-// ── BOOT ───────────────────────────────────────────────────────────────────────
+// ── BOOT ──────────────────────────────────────────────────────────────────────
 if (isMainThread) {
   console.log('╔══════════════════════════════════════════╗')
   console.log('║   A L U C A R D  v2.0  — Production      ║')
@@ -87,35 +60,66 @@ if (isMainThread) {
   await initDB()
   await initOverlay()
 
-  // Spawn Worker threads
-  spawn('./chains.js',    { chains: CHAINS })
+  // Spawn workers — capture sovereign worker reference
+  spawn('./chains.js',   { chains: CHAINS })
   spawn('./nexus.js')
   spawn('./apex.js')
-  spawn('./sovereign.js')
+  const sovereignW = spawn('./sovereign.js')   // ← CAPTURED
 
   // Main-thread modules
-  const [{ startDashboard }, { startRS }, { startTreasury }] =
-    await Promise.all([import('./dashboard.js'), import('./rs_engine.js'), import('./treasury.js')])
+  const [{ startDashboard }, { startRS }, { startTreasury }] = await Promise.all([
+    import('./dashboard.js'),
+    import('./rs_engine.js'),
+    import('./treasury.js'),
+  ])
 
-  startDashboard(SAB, CHAINS, ENV)
+  // Pass sovereign worker correctly — this was the crash source
+  startDashboard(SAB, CHAINS, sovereignW)      // ← PASSED CORRECTLY
   startRS(SAB)
-  startTreasury(SAB, ENV)
+  startTreasury(SAB)
 
-  // Health endpoint
-  createServer((req,res) => {
-    if (req.url!=='/health') { res.writeHead(404); return res.end() }
-    res.writeHead(200,{'Content-Type':'application/json'})
-    res.end(JSON.stringify({ ok:true, p:HOT[0], rev:HOT[1], chains:CHAINS.length, mb:process.memoryUsage().heapUsed/1024/1024|0, uptime:HOT[8]|0 }))
-  }).listen(3001).on('error',()=>{})
+  // Uptime counter
+  setInterval(() => HOT[8]++, 1000)
 
-  // Uptime + midnight reset
-  setInterval(()=>HOT[8]++, 1000)
-  const sched=()=>{ const n=new Date(),nx=new Date(); nx.setUTCHours(0,0,0,0); nx.setUTCDate(nx.getUTCDate()+1); setTimeout(()=>{HOT[1]=0;console.log('[BOOT] Daily rev reset');sched()},nx-n) }
-  sched()
+  // Midnight reset — daily revenue resets, reserve never resets
+  const schedMidnight = () => {
+    const now = new Date(), nx = new Date()
+    nx.setUTCHours(0, 0, 0, 0)
+    nx.setUTCDate(nx.getUTCDate() + 1)
+    setTimeout(() => {
+      HOT[1]  = 0   // daily revenue reset
+      HOT[6]  = 0   // execution count today reset
+      HOT[15] = 0   // cycles today reset
+      HOT[19] = 0   // yield today reset
+      // HOT[13] reserve NEVER resets — permanent capital
+      console.log('[BOOT] Midnight reset — daily counters cleared')
+      schedMidnight()
+    }, nx - now)
+  }
+  schedMidnight()
 
-  process.on('uncaughtException',  e=>console.error('[BOOT]',e.message?.slice(0,100)))
-  process.on('unhandledRejection', r=>console.error('[BOOT]',String(r).slice(0,100)))
-  process.on('SIGTERM', ()=>process.exit(0))
+  // Memory guard every 5s
+  setInterval(memGuard, 5000)
 
-  console.log(`[BOOT] Operational — :${ENV.PORT} | P${HOT[0]} | ${CHAINS.length} chains`)
+  // Health endpoint for Railway
+  createServer((req, res) => {
+    if (req.url !== '/health') { res.writeHead(404); return res.end() }
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      ok:        true,
+      propeller: HOT[0],
+      rev:       HOT[1],
+      reserve:   HOT[13],
+      flash:     HOT[14],
+      chains:    CHAINS.length,
+      uptime:    HOT[8] | 0,
+      mb:        process.memoryUsage().heapUsed / 1024 / 1024 | 0,
+    }))
+  }).listen(3001).on('error', () => {})
+
+  process.on('uncaughtException',  e => console.error('[BOOT]', e.message?.slice(0, 100)))
+  process.on('unhandledRejection', r => console.error('[BOOT]', String(r).slice(0, 100)))
+  process.on('SIGTERM', () => process.exit(0))
+
+  console.log(`[BOOT] Operational :${process.env.PORT || 3000} | P${HOT[0]} | ${CHAINS.length} chains`)
 }
