@@ -7,19 +7,29 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#07070A;--bg1:#0A0A0F;--bg2:#0D0D16;--bg3:#12121E;--bg4:#161624;
-  --blue:#00D4FF;--blue2:#0099CC;--blue3:#005577;--blue4:#002233;
-  --glow:0 0 24px rgba(0,212,255,.5),0 0 48px rgba(0,212,255,.2),0 0 96px rgba(0,212,255,.08);
-  --glow-s:0 0 10px rgba(0,212,255,.6);--glow-xs:0 0 5px rgba(0,212,255,.4);
-  --red:#FF2244;--amber:#FFB800;--green:#00FF88;--purple:#BB44FF;
-  --text:#D8F0FF;--muted:#3A6080;--dim:#1A3050;
-  --mono:'JetBrains Mono','Fira Code','Cascadia Code',monospace;
-  --border:1px solid rgba(0,212,255,.08);--radius:6px;
-  --tab-w:200px;
+  --bg:#080305;--bg1:#0C0508;--bg2:#10080A;--bg3:#140B0D;--bg4:#180E10;
+  --blue:#FF2200;--blue2:#CC1A00;--blue3:#881100;--blue4:#440800;
+  --text:#FF2200;
+  --mono:'Courier New', monospace;
+  --glow:0 0 24px rgba(255,34,0,.5),0 0 48px rgba(255,34,0,.2);
+  --glow-s:0 0 10px rgba(255,34,0,.6);--glow-xs:0 0 5px rgba(255,34,0,.4);
 }
-html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12px;overflow:hidden}
-::-webkit-scrollbar{width:3px;height:3px}::-webkit-scrollbar-track{background:var(--bg1)}::-webkit-scrollbar-thumb{background:var(--blue3);border-radius:2px}::-webkit-scrollbar-thumb:hover{background:var(--blue2)}
 
+html,body{
+  height:100%;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:12px;
+  overflow:hidden;
+}
+
+*{color:inherit}
+
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:var(--bg1)}
+::-webkit-scrollbar-thumb{background:var(--blue3);border-radius:2px}
+::-webkit-scrollbar-thumb:hover{background:var(--blue2)}
 /* ── GATE ── */
 #gate{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:0}
 .gate-wrap{text-align:center;max-width:320px;width:100%}
