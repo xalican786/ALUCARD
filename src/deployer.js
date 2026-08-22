@@ -6,7 +6,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { ethers }        from 'ethers'
 import { createRequire } from 'module'
-import { EXECUTOR_PK, EXECUTOR, TREASURY, BALANCER, CHAINS, USDC } from './config.js'
+import { EXECUTOR_PK, EXECUTOR, TREASURY, BALANCER, CHAINS, USDC } from './chains.js'
 
 const require = createRequire(import.meta.url)
 
