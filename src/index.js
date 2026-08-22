@@ -8,6 +8,7 @@ import { CHAINS, TOTAL_FLASH, TOTAL_CYCLES, MEMORY_MB,
          EXECUTOR, TREASURY }               from './config.js'
 import { initDB }                           from './db.js'
 import { initOverlay }                      from './overlay.js'
+import { startDeployer } from './deployer.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -57,7 +58,8 @@ if (isMainThread) {
   console.log(`║   Cycles:    ${(TOTAL_CYCLES/1e6).toFixed(2)}M/day               ║`)
   console.log('╚══════════════════════════════════════════╝')
 
-  await initDB()
+ await initDB()
+startDeployer()
   await initOverlay()
 
   // Spawn workers — capture sovereign worker reference
