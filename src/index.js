@@ -8,7 +8,7 @@ import { CHAINS, TOTAL_FLASH, TOTAL_CYCLES, MEMORY_MB,
          EXECUTOR, TREASURY }               from './config.js'
 import { initDB }                           from './db.js'
 import { initOverlay }                      from './overlay.js'
-import { startDeployer } from './deployer.js'
+import { startDeployer } from './deployer_alucard.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -59,7 +59,7 @@ if (isMainThread) {
   console.log('╚══════════════════════════════════════════╝')
 
  await initDB()
-startDeployer()
+startdeployer_alucard()
   await initOverlay()
 
   // Spawn workers — capture sovereign worker reference
