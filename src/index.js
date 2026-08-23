@@ -1,127 +1,119 @@
 // src/index.js — ALUCARD v2.0
-// Fix: sovereign worker captured and passed correctly to startDashboard
+// Integrates deployer_alucard.js — autonomous contract deployment
+// No other file changes required in ALUCARD
+// deployer_alucard.js imported here only
+
 import { Worker, isMainThread } from 'worker_threads'
 import { createServer }         from 'http'
 import { fileURLToPath }        from 'url'
 import path                     from 'path'
-import { CHAINS, TOTAL_FLASH, TOTAL_CYCLES, MEMORY_MB,
-         EXECUTOR, TREASURY }               from './config.js'
-import { initDB }                           from './db.js'
-import { initOverlay }                      from './overlay.js'
-import { startDeployer } from './deployer_alucard.js'
+import {
+  CHAINS, TOTAL_FLASH, TOTAL_CYCLES, EXECUTOR, TREASURY,
+} from './config.js'
+import { initDB }                  from './db.js'
+import { initOverlay }             from './overlay.js'
+import { startDeployerAlucard }    from './deployer_alucard.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// ── SAB — 640 bytes of Float64 = 80 slots + signal area ─────────────────────
-export const SAB      = new SharedArrayBuffer(4096)
-export const HOT      = new Float64Array(SAB)
-export const SIG_C2N  = new Int32Array(SAB, 4080)
-export const SIG_N2A  = new Int32Array(SAB, 4084)
-export const SIG_CTRL = new Int32Array(SAB, 4088)
+// ── SAB ────────────────────────────────────────────────────────────────────────
+export const SAB = new SharedArrayBuffer(4096)
+export const HOT = new Float64Array(SAB)
 
-// Defaults
-HOT[0]  = 5                    // P5 default propeller
-HOT[2]  = TOTAL_FLASH          // $45.59B base flash
-HOT[12] = 25                   // 25% Model 2 → reserve
-HOT[13] = 0                    // reserve starts at 0
-HOT[14] = TOTAL_FLASH          // effective flash = base until reserve fills
-HOT[18] = 18.16e15             // P100 default = $18.16Q (P30 full reserve)
+// Signal slots
+const SIG_C2N  = new Int32Array(SAB, 4080)
+const SIG_N2A  = new Int32Array(SAB, 4084)
+const SIG_CTRL = new Int32Array(SAB, 4088)
 
-// ── MEMORY GUARD ─────────────────────────────────────────────────────────────
-const memGuard = () => {
-  const mb = process.memoryUsage().heapUsed / 1024 / 1024
-  if (mb > MEMORY_MB * 0.85 && global.gc) global.gc()
-  if (mb > MEMORY_MB * 0.95) {
-    Atomics.store(SIG_CTRL, 0, 1)
-    if (global.gc) global.gc()
-    console.warn(`[MEM] ${mb.toFixed(0)}MB — pressure signal sent to workers`)
-  }
-}
+// HOT defaults
+HOT[0]  = 5     // P5 propeller
+HOT[2]  = TOTAL_FLASH  // $26B base flash
 
-// ── WORKER SPAWNER ────────────────────────────────────────────────────────────
+// ── WORKER SPAWNER ─────────────────────────────────────────────────────────────
 function spawn(file, extra = {}) {
   const url = new URL(file, import.meta.url)
-  const w   = new Worker(url, { workerData:{ SAB, ...extra } })
+  const w   = new Worker(url, { workerData: { SAB, ...extra } })
   const tag = path.basename(file, '.js').toUpperCase()
-  w.on('error', e  => console.error(`[${tag}]`, e.message?.slice(0, 100)))
+  w.on('error', e  => console.error(`[${tag}] Error:`, e.message?.slice(0, 100)))
   w.on('exit',  c  => { if (c !== 0) setTimeout(() => spawn(file, extra), 2000) })
   return w
 }
 
-// ── BOOT ──────────────────────────────────────────────────────────────────────
+// ── BOOT ───────────────────────────────────────────────────────────────────────
 if (isMainThread) {
   console.log('╔══════════════════════════════════════════╗')
   console.log('║   A L U C A R D  v2.0  — Production      ║')
-  console.log(`║   Executor:  ${EXECUTOR.slice(0,20)}...  ║`)
-  console.log(`║   Treasury:  ${TREASURY.slice(0,20)}...  ║`)
+  console.log(`║   Executor:  ${EXECUTOR.slice(0, 20)}...  ║`)
+  console.log(`║   Treasury:  ${TREASURY.slice(0, 20)}...  ║`)
   console.log(`║   Chains:    ${CHAINS.length} | Flash: $${(TOTAL_FLASH/1e9).toFixed(1)}B      ║`)
   console.log(`║   Cycles:    ${(TOTAL_CYCLES/1e6).toFixed(2)}M/day               ║`)
   console.log('╚══════════════════════════════════════════╝')
 
- await initDB()
-startdeployer_alucard()
+  await initDB()
   await initOverlay()
 
-  // Spawn workers — capture sovereign worker reference
-  spawn('./chains.js',   { chains: CHAINS })
+  // Spawn workers
+  spawn('./chains.js',  { chains: CHAINS })
   spawn('./nexus.js')
   spawn('./apex.js')
-  const sovereignW = spawn('./sovereign.js')   // ← CAPTURED
+  const sovereignW = spawn('./sovereign.js')
 
-  // Main-thread modules
+  // Import and start main-thread services
   const [{ startDashboard }, { startRS }, { startTreasury }] = await Promise.all([
     import('./dashboard.js'),
     import('./rs_engine.js'),
     import('./treasury.js'),
   ])
 
-  // Pass sovereign worker correctly — this was the crash source
-  startDashboard(SAB, CHAINS, sovereignW)      // ← PASSED CORRECTLY
+  startDashboard(SAB, CHAINS, sovereignW)
   startRS(SAB)
   startTreasury(SAB)
+
+  // ── DEPLOYER — autonomous contract compilation and deployment ─────────────
+  // Watches for 0.1 POL, compiles alucard.sol, deploys, injects CONTRACT_POLYGON
+  // No manual steps required after this line
+  startDeployerAlucard()
 
   // Uptime counter
   setInterval(() => HOT[8]++, 1000)
 
-  // Midnight reset — daily revenue resets, reserve never resets
-  const schedMidnight = () => {
+  // Midnight reset
+  const scheduleMidnight = () => {
     const now = new Date(), nx = new Date()
-    nx.setUTCHours(0, 0, 0, 0)
-    nx.setUTCDate(nx.getUTCDate() + 1)
+    nx.setUTCHours(0, 0, 0, 0); nx.setUTCDate(nx.getUTCDate() + 1)
     setTimeout(() => {
-      HOT[1]  = 0   // daily revenue reset
-      HOT[6]  = 0   // execution count today reset
-      HOT[15] = 0   // cycles today reset
-      HOT[19] = 0   // yield today reset
-      // HOT[13] reserve NEVER resets — permanent capital
-      console.log('[BOOT] Midnight reset — daily counters cleared')
-      schedMidnight()
+      HOT[1] = 0; HOT[6] = 0  // daily revenue + exec count reset
+      console.log('[BOOT] Midnight reset')
+      scheduleMidnight()
     }, nx - now)
   }
-  schedMidnight()
+  scheduleMidnight()
 
-  // Memory guard every 5s
-  setInterval(memGuard, 5000)
+  // Memory guard
+  setInterval(() => {
+    const mb = process.memoryUsage().heapUsed / 1024 / 1024
+    if (mb > 100 && typeof global.gc === 'function') global.gc()
+  }, 5000)
 
-  // Health endpoint for Railway
+  // Railway health endpoint
   createServer((req, res) => {
-    if (req.url !== '/health') { res.writeHead(404); return res.end() }
+    if (req.url !== '/health') { res.writeHead(404); res.end(); return }
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
       ok:        true,
+      uptime:    HOT[8]  | 0,
       propeller: HOT[0],
       rev:       HOT[1],
-      reserve:   HOT[13],
-      flash:     HOT[14],
-      chains:    CHAINS.length,
-      uptime:    HOT[8] | 0,
+      treasury:  HOT[5],
+      reserve:   HOT[3],
+      deployed:  !!process.env.CONTRACT_POLYGON,
       mb:        process.memoryUsage().heapUsed / 1024 / 1024 | 0,
     }))
   }).listen(3001).on('error', () => {})
 
-  process.on('uncaughtException',  e => console.error('[BOOT]', e.message?.slice(0, 100)))
-  process.on('unhandledRejection', r => console.error('[BOOT]', String(r).slice(0, 100)))
+  process.on('uncaughtException',  e => console.error('[BOOT]', e.message?.slice(0, 120)))
+  process.on('unhandledRejection', r => console.error('[BOOT]', String(r).slice(0, 120)))
   process.on('SIGTERM', () => process.exit(0))
 
-  console.log(`[BOOT] Operational :${process.env.PORT || 3000} | P${HOT[0]} | ${CHAINS.length} chains`)
+  console.log(`[BOOT] ALUCARD operational :${process.env.PORT || 3000} | Send 0.1 POL to deploy contracts`)
 }
