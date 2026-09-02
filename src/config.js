@@ -32,7 +32,7 @@ const AK = {
 const alchemy = (subdomain, key) => `https://${subdomain}.g.alchemy.com/v2/${key}`
 
 // ── WALLETS ───────────────────────────────────────────────────────────────────
-export const EXECUTOR  = '0xEc92EF0C897b48A3525Df011D08011c5eB2D6D39'
+export const EXECUTOR  = '0xBC1Fb9CC5791c53bd8c36c3D081e7775FC423036'
 export const TREASURY  = '0xCCCF1C9A2154750A0D7CceeD51fE0f9b4c1906e8'
 export const BALANCER  = '0xBA12222222228d8Ba445958a75a0704d566BF2C8'
 export const MC3       = '0xcA11bde05977b3631167028862bE2a173976CA11'
