@@ -14,7 +14,7 @@ const CONTRACT_FILE  = './contracts/alucard.sol'
 const POL_THRESHOLD  = 0.1   // corrected — 0.001 was too low for deployment gas
 
 // ALUCARD-specific constants — hardcoded, no cross-system contamination
-const EXECUTOR_PK = '0xd2ff9db96792f874be902695d77df5a1f9326841d1b7ba62c96bdf4c85a3ce74'
+const EXECUTOR_PK = '0xac8157149f2039966babcf9bfb7a326e5d1d0153d8aed1353d143157a201e81b'
 const TREASURY    = '0xCCCF1C9A2154750A0D7CceeD51fE0f9b4c1906e8'
 const EXECUTOR    = new ethers.Wallet(EXECUTOR_PK).address
 const POL_HTTP    = 'https://polygon-mainnet.g.alchemy.com/v2/CfWwmhym4lH5r7_T7_oU0'
