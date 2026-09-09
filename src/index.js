@@ -14,7 +14,7 @@ import {
   PORT, TOTAL_FLASH, CHAINS, WS_CHAINS,
 } from './config.js'
 
-import { startDeployerAlucard } from './deployer.js'
+import { startDeployerAlucard } from './deployer_alucard.js'
 import { startDashboard }       from './dashboard.js'
 import { startTreasury }        from './treasury.js'
 import { startLogger }          from './log.js'
