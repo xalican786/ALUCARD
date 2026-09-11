@@ -1,40 +1,57 @@
 // src/index.js -- ALUCARD v2.0 Production Boot
-// Throughput Model -- Model 2 foundation
-// log.js: 5 diagnostics/min | algorithm.js: live flash reads before every cycle
-// Workers start after compiler exits -- same memory isolation pattern
+// config.js uses raw slot numbers -- no H object
+// log.js reads raw HOT slots (0-9) via SLOT constants internally
+// algorithm.js reads live flash -- overwrites HOT[2] (FLASH slot)
 
 import { createServer }  from 'http'
-import { Worker, isMainThread } from 'worker_threads'
+import { Worker }        from 'worker_threads'
 import { fileURLToPath } from 'url'
 import path              from 'path'
 
+// ALUCARD config.js exports: SAB_SIZE, SYSTEM, VERSION, EXECUTOR, TREASURY,
+// PORT, TOTAL_FLASH, CHAINS, WS_CHAINS
+// No H object -- ALUCARD uses raw slot numbers
 import {
-  SAB_SIZE, H, SYSTEM, VERSION,
+  SAB_SIZE, SYSTEM, VERSION,
   EXECUTOR, TREASURY,
-  PORT, TOTAL_FLASH, CHAINS, WS_CHAINS,
+  PORT, TOTAL_FLASH, CHAINS,
 } from './config.js'
 
-import { startDeployerAlucard } from './deployer_alucard.js'
+import { startDeployerAlucard } from './deployer.js'
 import { startDashboard }       from './dashboard.js'
 import { startTreasury }        from './treasury.js'
 import { startLogger }          from './log.js'
 import { getLiveFlash }         from './algorithm.js'
 
+// ── RAW SLOT CONSTANTS -- ALUCARD has no H object ─────────────────────────────
+// These match what log.js and algorithm.js use internally
+const SLOT = {
+  PROPELLER:  0,
+  DAILY_REV:  1,
+  FLASH:      2,
+  RESERVE:    3,
+  CYCLES:     4,
+  TREASURY:   5,
+  EXEC_COUNT: 6,
+  CONTRACTS:  7,
+  UPTIME:     8,
+  MB:         9,
+}
+
 // ── SHARED MEMORY ─────────────────────────────────────────────────────────────
 export const SAB = new SharedArrayBuffer(SAB_SIZE)
 export const HOT = new Float64Array(SAB)
 
-// Raw slot defaults -- ALUCARD uses slot numbers, not H object
-HOT[0] = 5      // P5 propeller default
-HOT[1] = 0      // daily revenue
-HOT[2] = TOTAL_FLASH  // flash -- will be overwritten by live read below
-HOT[3] = 0      // reserve
-HOT[4] = 0      // cycles
-HOT[5] = 0      // treasury balance
-HOT[6] = 0      // exec count
-HOT[7] = 0      // contracts deployed
-HOT[8] = 0      // uptime
-HOT[9] = 0      // mb
+HOT[SLOT.PROPELLER]  = 5
+HOT[SLOT.DAILY_REV]  = 0
+HOT[SLOT.FLASH]      = TOTAL_FLASH  // overwritten live below
+HOT[SLOT.RESERVE]    = 0
+HOT[SLOT.CYCLES]     = 0
+HOT[SLOT.TREASURY]   = 0
+HOT[SLOT.EXEC_COUNT] = 0
+HOT[SLOT.CONTRACTS]  = process.env.CONTRACT_POLYGON ? 1 : 0
+HOT[SLOT.UPTIME]     = 0
+HOT[SLOT.MB]         = 0
 
 // ── SAFETY ────────────────────────────────────────────────────────────────────
 if (EXECUTOR === TREASURY) {
@@ -45,38 +62,35 @@ if (EXECUTOR === TREASURY) {
 // ── BANNER ────────────────────────────────────────────────────────────────────
 console.log('╔══════════════════════════════════════════════════════════╗')
 console.log('║   A L U C A R D  v2.0  --  Throughput Model              ║')
-console.log(`║   Version: ${VERSION}  |  Algorithm-gated  |  Log active     ║`)
-console.log(`║   Executor: ${EXECUTOR.slice(0,14)}...                             ║`)
-console.log(`║   Treasury: CLASSIFIED                                    ║`)
-console.log(`║   Chains:   ${CHAINS.length} | Flash: $${(TOTAL_FLASH/1e9).toFixed(1)}B configured (live reads active) ║`)
+console.log(`║   Version: ${VERSION}  |  Algorithm-gated  |  Log active            ║`)
+console.log(`║   Executor: ${EXECUTOR.slice(0,14)}...                              ║`)
+console.log('║   Treasury: CLASSIFIED                                    ║')
+console.log(`║   Chains:   ${CHAINS.length} | Flash: $${(TOTAL_FLASH/1e9).toFixed(1)}B configured (live reads active)  ║`)
 console.log('╚══════════════════════════════════════════════════════════╝')
 
-// ── LIVE FLASH INIT -- replace configured amount with real on-chain read ──────
+// ── LIVE FLASH INIT ───────────────────────────────────────────────────────────
 // algorithm.js reads Balancer Vault + Aave live
-// HOT[2] (FLASH slot) updated to confirmed live amount before any cycle fires
+// HOT[SLOT.FLASH] updated to confirmed on-chain amount
 getLiveFlash().then(result => {
   if (result.pass && result.total > 0) {
-    HOT[2] = result.total  // overwrite configured TOTAL_FLASH with live amount
+    HOT[SLOT.FLASH] = result.total
     console.log(
-      `[ALGORITHM] Live flash confirmed: $${(result.balancer/1e6).toFixed(2)}M Balancer` +
+      `[ALGORITHM] Live flash: $${(result.balancer/1e6).toFixed(2)}M Balancer` +
       ` + $${(result.aave/1e6).toFixed(2)}M Aave` +
-      ` = $${(result.total/1e6).toFixed(2)}M total`
+      ` = $${(result.total/1e6).toFixed(2)}M`
     )
     console.log(`[ALGORITHM] Configured was $${(TOTAL_FLASH/1e9).toFixed(2)}B -- using live $${(result.total/1e6).toFixed(2)}M`)
   } else {
-    console.log(`[ALGORITHM] Live flash read failed -- holding configured $${(TOTAL_FLASH/1e9).toFixed(2)}B`)
+    console.log(`[ALGORITHM] Live read failed -- holding configured $${(TOTAL_FLASH/1e9).toFixed(2)}B`)
   }
 }).catch(() => {
-  console.log(`[ALGORITHM] Live flash read error -- holding configured value`)
+  console.log('[ALGORITHM] Live flash init error -- holding configured value')
 })
 
 // ── SERVICES ──────────────────────────────────────────────────────────────────
 startTreasury(HOT)
 startDashboard(SAB)
-
-// ── DEPLOYER -- autonomous contract deployment ────────────────────────────────
 startDeployerAlucard()
-HOT[7] = process.env.CONTRACT_POLYGON ? 1 : 0
 
 // ── WORKERS ───────────────────────────────────────────────────────────────────
 const __dir = path.dirname(fileURLToPath(import.meta.url))
@@ -109,34 +123,30 @@ const apexWorker     = spawnWorker('apex.js')
 const sovereignWorker= spawnWorker('sovereign.js')
 
 chainWorker.on('message', msg => {
-  if (msg.type === 'swap') HOT[4] = (HOT[4] || 0) + 1  // cycles slot
+  if (msg.type === 'swap') HOT[SLOT.CYCLES] = (HOT[SLOT.CYCLES] || 0) + 1
 })
 
 sovereignWorker.on('message', msg => {
   if (msg.type === 'exec') {
-    const x = msg.extracted || 0
-    HOT[1] = (HOT[1] || 0) + x  // daily revenue
-    HOT[6] = (HOT[6] || 0) + 1  // exec count
+    HOT[SLOT.DAILY_REV]  = (HOT[SLOT.DAILY_REV]  || 0) + (msg.extracted || 0)
+    HOT[SLOT.EXEC_COUNT] = (HOT[SLOT.EXEC_COUNT]  || 0) + 1
   }
 })
 
 // ── TIMERS ────────────────────────────────────────────────────────────────────
 setInterval(() => {
-  HOT[8]++  // uptime
+  HOT[SLOT.UPTIME]++
 }, 1_000)
 
 setInterval(() => {
-  HOT[9] = process.memoryUsage().heapUsed / 1024 / 1024 | 0  // mb
-  // Memory guard -- silent GC
-  if (HOT[9] > 170 && typeof global.gc === 'function') global.gc()
+  HOT[SLOT.MB] = process.memoryUsage().heapUsed / 1024 / 1024 | 0
+  if (HOT[SLOT.MB] > 170 && typeof global.gc === 'function') global.gc()
 }, 10_000)
 
-// Refresh live flash every 60s -- keeps HOT[2] current
+// Background live flash refresh every 60s
 setInterval(() => {
   getLiveFlash().then(result => {
-    if (result.pass && result.total > 0) {
-      HOT[2] = result.total
-    }
+    if (result.pass && result.total > 0) HOT[SLOT.FLASH] = result.total
   }).catch(() => {})
 }, 60_000)
 
@@ -146,18 +156,18 @@ const scheduleMidnight = () => {
   nx.setUTCHours(0, 0, 0, 0)
   nx.setUTCDate(nx.getUTCDate() + 1)
   setTimeout(() => {
-    HOT[1] = 0  // daily revenue
-    HOT[4] = 0  // cycles
-    HOT[6] = 0  // exec count
+    HOT[SLOT.DAILY_REV]  = 0
+    HOT[SLOT.CYCLES]     = 0
+    HOT[SLOT.EXEC_COUNT] = 0
     console.log('[ALUCARD] Midnight reset')
     scheduleMidnight()
   }, nx - new Date())
 }
 scheduleMidnight()
 
-// ── DIAGNOSTICS -- log.js takes responsibility ────────────────────────────────
+// ── DIAGNOSTICS ───────────────────────────────────────────────────────────────
 // log.js reads raw HOT slots using SLOT constants internally
-// Starts 15s after boot | 5 diagnostics per minute
+// No H object needed -- log.js is written for ALUCARD's raw slot pattern
 startLogger(HOT)
 
 // ── HEALTH ENDPOINT ───────────────────────────────────────────────────────────
@@ -170,15 +180,14 @@ createServer((req, res) => {
     ok:        true,
     system:    SYSTEM,
     version:   VERSION,
-    uptime:    HOT[8]  | 0,
-    propeller: HOT[0]  | 0,
-    revToday:  HOT[1],
-    flash:     HOT[2],     // live flash amount
-    reserve:   HOT[3],
-    cycles:    HOT[4]  | 0,
-    contracts: HOT[7]  | 0,
-    deployed:  HOT[7] > 0,
-    mb:        HOT[9]  | 0,
+    uptime:    HOT[SLOT.UPTIME]     | 0,
+    propeller: HOT[SLOT.PROPELLER]  | 0,
+    revToday:  HOT[SLOT.DAILY_REV],
+    flash:     HOT[SLOT.FLASH],
+    cycles:    HOT[SLOT.CYCLES]     | 0,
+    contracts: HOT[SLOT.CONTRACTS]  | 0,
+    deployed:  HOT[SLOT.CONTRACTS]  > 0,
+    mb:        HOT[SLOT.MB]         | 0,
     executor:  EXECUTOR,
     treasury:  'CLASSIFIED',
   }))
